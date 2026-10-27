@@ -1,0 +1,21 @@
+### Create event
+POST http://localhost:8080/api/v1/audit-events
+Authorization: Basic writer writer-change-me
+Content-Type: application/json
+
+{"eventType":"ACCOUNT_VIEWED","actorId":"EMP101","resourceType":"CLIENT_ACCOUNT","resourceId":"ACC5001","payload":{"operation":"VIEW","channel":"WEB"},"timestamp":"2026-10-27T10:30:00Z"}
+
+### Query
+GET http://localhost:8080/api/v1/audit-events?actorId=EMP101&page=0&size=20
+Authorization: Basic reader reader-change-me
+
+### Verify
+GET http://localhost:8080/api/v1/audit-events/verify
+Authorization: Basic admin admin-change-me
+
+### Archive
+POST http://localhost:8080/api/v1/audit-events/archive
+Authorization: Basic admin admin-change-me
+Content-Type: application/json
+
+{"cutoff":"2027-10-27T00:00:00Z","requestedBy":"AUDIT_ADMIN","reason":"Retention policy"}

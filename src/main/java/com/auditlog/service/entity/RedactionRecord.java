@@ -1,0 +1,2 @@
+package com.auditlog.service.entity;import jakarta.persistence.*;import java.time.Instant;import java.util.UUID;
+@Entity @Table(name="audit_redaction") public class RedactionRecord{@Id private UUID id;private UUID eventId;@Column(columnDefinition="jsonb") private String jsonPaths;private String commitment;private String reason;private String requestedBy;private Instant createdAt;protected RedactionRecord(){}public RedactionRecord(UUID i,UUID e,String p,String c,String r,String b){id=i;eventId=e;jsonPaths=p;commitment=c;reason=r;requestedBy=b;createdAt=Instant.now();}}

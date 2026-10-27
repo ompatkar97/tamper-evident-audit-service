@@ -1,0 +1,17 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate.ddl-auto: validate
+    open-in-view: false
+  flyway.enabled: true
+management.endpoints.web.exposure.include: health,info
+springdoc.swagger-ui.path: /swagger-ui.html
+audit:
+  genesis-hash: ${AUDIT_GENESIS_HASH:0000000000000000000000000000000000000000000000000000000000000000}
+  hmac-key: ${AUDIT_HMAC_KEY:local-development-key-change-me}
+  retention:
+    enabled: true
+    period: P365D

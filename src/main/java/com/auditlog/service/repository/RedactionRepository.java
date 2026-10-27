@@ -1,0 +1,1 @@
+package com.auditlog.service.repository;import com.auditlog.service.entity.RedactionRecord;import java.util.UUID;import org.springframework.data.jpa.repository.JpaRepository;public interface RedactionRepository extends JpaRepository<RedactionRecord,UUID>{}
