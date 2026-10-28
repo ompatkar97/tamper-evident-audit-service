@@ -1,10 +1,330 @@
 package com.auditlog.service.service;
-import com.auditlog.service.config.AuditProperties;import com.auditlog.service.crypto.CryptoService;import com.auditlog.service.dto.ApiDtos.*;import com.auditlog.service.entity.*;import com.auditlog.service.repository.*;import com.fasterxml.jackson.databind.*;import java.time.Instant;import java.util.*;import org.springframework.data.domain.*;import org.springframework.data.jpa.domain.Specification;import org.springframework.stereotype.Service;import org.springframework.transaction.annotation.Transactional;
-@Service public class AuditService{private final AuditEventRepository events;private final ChainStateRepository states;private final CryptoService crypto;private final ObjectMapper om;private final AuditProperties props;
- public AuditService(AuditEventRepository e,ChainStateRepository s,CryptoService c,ObjectMapper o,AuditProperties p){events=e;states=s;crypto=c;om=o;props=p;}
- @Transactional public AuditEventResponse create(CreateAuditEventRequest r){ChainState state=states.lock();long seq=state.getLastSequence()+1;String prev=state.getLastHash();UUID id=UUID.randomUUID();String payload=crypto.canonical(r.payload());String hash=crypto.eventHash(seq,id,r.eventType(),r.actorId(),r.resourceType(),r.resourceId(),payload,r.timestamp(),prev);AuditEvent e=events.save(new AuditEvent(id,seq,r.eventType(),r.actorId(),r.resourceType(),r.resourceId(),payload,r.timestamp(),prev,hash));state.advance(seq,hash);return map(e);}
- @Transactional(readOnly=true) public Page<AuditEventResponse> query(String actor,String rt,String rid,String type,Instant from,Instant to,int page,int size){Specification<AuditEvent> s=(root,q,cb)->cb.conjunction();if(actor!=null)s=s.and((r,q,c)->c.equal(r.get("actorId"),actor));if(rt!=null)s=s.and((r,q,c)->c.equal(r.get("resourceType"),rt));if(rid!=null)s=s.and((r,q,c)->c.equal(r.get("resourceId"),rid));if(type!=null)s=s.and((r,q,c)->c.equal(r.get("eventType"),type));if(from!=null)s=s.and((r,q,c)->c.greaterThanOrEqualTo(r.get("eventTimestamp"),from));if(to!=null)s=s.and((r,q,c)->c.lessThanOrEqualTo(r.get("eventTimestamp"),to));return events.findAll(s,PageRequest.of(page,Math.min(size,100),Sort.by("sequenceNumber"))).map(this::map);}
- @Transactional(readOnly=true) public VerifyResponse verify(){List<AuditEvent> list=events.findAllByOrderBySequenceNumberAsc();String expected=props.genesisHash();long seq=1,verified=0;for(AuditEvent e:list){if(e.getSequenceNumber()!=seq)return bad(verified,e,"SEQUENCE_GAP");if(!e.getPreviousHash().equals(expected))return bad(verified,e,"PREVIOUS_HASH_MISMATCH");if(!e.getCurrentHash().equals(crypto.recalc(e)))return bad(verified,e,"CURRENT_HASH_MISMATCH");expected=e.getCurrentHash();seq++;verified++;}return new VerifyResponse(true,verified,null,null,null,"Audit chain is valid");}
- private VerifyResponse bad(long v,AuditEvent e,String t){return new VerifyResponse(false,v,e.getId(),e.getSequenceNumber(),t,"First chain inconsistency detected");}
- public AuditEventResponse map(AuditEvent e){try{return new AuditEventResponse(e.getId(),e.getSequenceNumber(),e.getEventType(),e.getActorId(),e.getResourceType(),e.getResourceId(),om.readTree(e.getPayload()),e.getEventTimestamp(),e.getPreviousHash(),e.getCurrentHash(),e.isArchived());}catch(Exception x){throw new IllegalStateException(x);}}
- public AuditEvent require(UUID id){return events.findById(id).orElseThrow(()->new NoSuchElementException("Audit event not found"));}}
+
+import com.auditlog.service.config.AuditProperties;
+import com.auditlog.service.crypto.CryptoService;
+import com.auditlog.service.dto.ApiDtos.AuditEventResponse;
+import com.auditlog.service.dto.ApiDtos.CreateAuditEventRequest;
+import com.auditlog.service.dto.ApiDtos.VerifyResponse;
+import com.auditlog.service.entity.AuditEvent;
+import com.auditlog.service.entity.ChainState;
+import com.auditlog.service.repository.AuditEventRepository;
+import com.auditlog.service.repository.ChainStateRepository;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.UUID;
+
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class AuditService {
+
+ private static final int MAX_PAGE_SIZE = 100;
+
+ private final AuditEventRepository events;
+ private final ChainStateRepository states;
+ private final CryptoService crypto;
+ private final AuditProperties properties;
+
+ public AuditService(
+         AuditEventRepository events,
+         ChainStateRepository states,
+         CryptoService crypto,
+         AuditProperties properties
+ ) {
+  this.events = events;
+  this.states = states;
+  this.crypto = crypto;
+  this.properties = properties;
+ }
+
+ @Transactional
+ public AuditEventResponse create(CreateAuditEventRequest request) {
+
+  ChainState state = states.lock();
+
+  long sequenceNumber = state.getLastSequence() + 1;
+  String previousHash = state.getLastHash();
+
+  UUID eventId = UUID.randomUUID();
+
+  /*
+   * Canonical JSON is used ONLY for calculating the hash.
+   * The actual JsonNode is stored in PostgreSQL JSONB.
+   */
+  String canonicalPayload =
+          crypto.canonical(request.payload());
+
+  String currentHash = crypto.eventHash(
+          sequenceNumber,
+          eventId,
+          request.eventType(),
+          request.actorId(),
+          request.resourceType(),
+          request.resourceId(),
+          canonicalPayload,
+          request.timestamp(),
+          previousHash
+  );
+
+  AuditEvent auditEvent = new AuditEvent(
+          eventId,
+          sequenceNumber,
+          request.eventType(),
+          request.actorId(),
+          request.resourceType(),
+          request.resourceId(),
+          request.payload(),
+          request.timestamp(),
+          previousHash,
+          currentHash
+  );
+
+  AuditEvent savedEvent = events.save(auditEvent);
+
+  state.advance(
+          sequenceNumber,
+          currentHash
+  );
+
+  return map(savedEvent);
+ }
+
+ @Transactional(readOnly = true)
+ public Page<AuditEventResponse> query(
+         String actorId,
+         String resourceType,
+         String resourceId,
+         String eventType,
+         Instant fromTimestamp,
+         Instant toTimestamp,
+         int page,
+         int size
+ ) {
+
+  Specification<AuditEvent> specification =
+          (root, query, criteriaBuilder) ->
+                  criteriaBuilder.conjunction();
+
+  if (actorId != null && !actorId.isBlank()) {
+
+   specification = specification.and(
+           (root, query, cb) ->
+                   cb.equal(
+                           root.get("actorId"),
+                           actorId
+                   )
+   );
+  }
+
+  if (resourceType != null && !resourceType.isBlank()) {
+
+   specification = specification.and(
+           (root, query, cb) ->
+                   cb.equal(
+                           root.get("resourceType"),
+                           resourceType
+                   )
+   );
+  }
+
+  if (resourceId != null && !resourceId.isBlank()) {
+
+   specification = specification.and(
+           (root, query, cb) ->
+                   cb.equal(
+                           root.get("resourceId"),
+                           resourceId
+                   )
+   );
+  }
+
+  if (eventType != null && !eventType.isBlank()) {
+
+   specification = specification.and(
+           (root, query, cb) ->
+                   cb.equal(
+                           root.get("eventType"),
+                           eventType
+                   )
+   );
+  }
+
+  if (fromTimestamp != null) {
+
+   specification = specification.and(
+           (root, query, cb) ->
+                   cb.greaterThanOrEqualTo(
+                           root.get("eventTimestamp"),
+                           fromTimestamp
+                   )
+   );
+  }
+
+  if (toTimestamp != null) {
+
+   specification = specification.and(
+           (root, query, cb) ->
+                   cb.lessThanOrEqualTo(
+                           root.get("eventTimestamp"),
+                           toTimestamp
+                   )
+   );
+  }
+
+  int pageSize =
+          Math.min(
+                  Math.max(size, 1),
+                  MAX_PAGE_SIZE
+          );
+
+  int pageNumber = Math.max(page, 0);
+
+  PageRequest pageRequest = PageRequest.of(
+          pageNumber,
+          pageSize,
+          Sort.by(
+                  Sort.Direction.ASC,
+                  "sequenceNumber"
+          )
+  );
+
+  return events
+          .findAll(specification, pageRequest)
+          .map(this::map);
+ }
+
+ @Transactional(readOnly = true)
+ public VerifyResponse verify() {
+
+  List<AuditEvent> auditEvents =
+          events.findAllByOrderBySequenceNumberAsc();
+
+  String expectedPreviousHash =
+          properties.genesisHash();
+
+  long expectedSequence = 1;
+  long verifiedRecords = 0;
+
+  for (AuditEvent event : auditEvents) {
+
+   /*
+    * Check sequence integrity.
+    */
+   if (event.getSequenceNumber()
+           != expectedSequence) {
+
+    return invalid(
+            verifiedRecords,
+            event,
+            "SEQUENCE_GAP"
+    );
+   }
+
+   /*
+    * Check that this event references
+    * the previous event correctly.
+    */
+   if (!event.getPreviousHash()
+           .equals(expectedPreviousHash)) {
+
+    return invalid(
+            verifiedRecords,
+            event,
+            "PREVIOUS_HASH_MISMATCH"
+    );
+   }
+
+   /*
+    * Recalculate hash from the database record.
+    *
+    * CryptoService.recalc() must canonicalize
+    * event.getPayload() before hashing.
+    */
+   String recalculatedHash =
+           crypto.recalc(event);
+
+   if (!event.getCurrentHash()
+           .equals(recalculatedHash)) {
+
+    return invalid(
+            verifiedRecords,
+            event,
+            "CURRENT_HASH_MISMATCH"
+    );
+   }
+
+   expectedPreviousHash =
+           event.getCurrentHash();
+
+   expectedSequence++;
+
+   verifiedRecords++;
+  }
+
+  return new VerifyResponse(
+          true,
+          verifiedRecords,
+          null,
+          null,
+          null,
+          "Audit chain is valid"
+  );
+ }
+
+ private VerifyResponse invalid(
+         long verifiedRecords,
+         AuditEvent event,
+         String violationType
+ ) {
+
+  return new VerifyResponse(
+          false,
+          verifiedRecords,
+          event.getId(),
+          event.getSequenceNumber(),
+          violationType,
+          "First chain inconsistency detected"
+  );
+ }
+
+ public AuditEventResponse map(
+         AuditEvent event
+ ) {
+
+  return new AuditEventResponse(
+          event.getId(),
+          event.getSequenceNumber(),
+          event.getEventType(),
+          event.getActorId(),
+          event.getResourceType(),
+          event.getResourceId(),
+
+          // Already JsonNode
+          event.getPayload(),
+
+          event.getEventTimestamp(),
+          event.getPreviousHash(),
+          event.getCurrentHash(),
+          event.isArchived()
+  );
+ }
+
+ @Transactional(readOnly = true)
+ public AuditEvent require(UUID id) {
+
+  return events
+          .findById(id)
+          .orElseThrow(
+                  () -> new NoSuchElementException(
+                          "Audit event not found: " + id
+                  )
+          );
+ }
+}
