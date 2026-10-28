@@ -1,54 +1,107 @@
 package com.auditlog.service.service;
-import com.auditlog.service.config.AuditProperties;import com.auditlog.service.crypto.CryptoService;import com.auditlog.service.dto.ApiDtos.*;import com.auditlog.service.entity.*;import com.auditlog.service.repository.*;import com.fasterxml.jackson.databind.ObjectMapper;import java.time.*;import java.util.*;import org.springframework.stereotype.Service;import org.springframework.transaction.annotation.Transactional;
-@Service public class ExtensionService{private final AuditEventRepository events;private final ArchiveBatchRepository archives;private final RedactionRepository redactions;private final AuditService audit;private final CryptoService crypto;private final AuditProperties props;private final ObjectMapper om;
- public ExtensionService(AuditEventRepository e,ArchiveBatchRepository a,RedactionRepository r,AuditService s,CryptoService c,AuditProperties p,ObjectMapper o){events=e;archives=a;redactions=r;audit=s;crypto=c;props=p;om=o;}
- @Transactional public ArchiveResponse archive(ArchiveRequest r){List<AuditEvent> list=events.findByEventTimestampBeforeAndArchivedFalseOrderBySequenceNumberAsc(r.cutoff());if(list.isEmpty())return new ArchiveResponse(null,0);UUID id=UUID.randomUUID();String manifest=crypto.sha256(list.stream().map(AuditEvent::getCurrentHash).reduce("",String::concat));archives.save(new ArchiveBatch(id,list.get(0).getSequenceNumber(),list.get(list.size()-1).getSequenceNumber(),list.size(),list.get(0).getCurrentHash(),list.get(list.size()-1).getCurrentHash(),manifest,r.requestedBy(),r.reason()));list.forEach(e->e.archive(id));return new ArchiveResponse(id,list.size());}
- @Transactional
- public RedactionResponse redact(
-         UUID eventId,
-         RedactionRequest request
- ) {
 
-  AuditEvent event = audit.require(eventId);
+import com.auditlog.service.config.AuditProperties;
+import com.auditlog.service.crypto.CryptoService;
+import com.auditlog.service.dto.ApiDtos.*;
+import com.auditlog.service.entity.*;
+import com.auditlog.service.repository.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-  String commitment = crypto.redactionCommitment(
-          props.hmacKey(),
-          event.getPayload(),
-          request.jsonPaths()
-  );
+import java.time.*;
+import java.util.*;
 
-  UUID redactionId = UUID.randomUUID();
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-  try {
-   String jsonPaths =
-           om.writeValueAsString(request.jsonPaths());
+@Service
+public class ExtensionService {
+    private final AuditEventRepository events;
+    private final ArchiveBatchRepository archives;
+    private final RedactionRepository redactions;
+    private final AuditService audit;
+    private final CryptoService crypto;
+    private final AuditProperties props;
+    private final ObjectMapper om;
 
-   RedactionRecord redactionRecord =
-           new RedactionRecord(
-                   redactionId,
-                   eventId,
-                   jsonPaths,
-                   commitment,
-                   request.reason(),
-                   request.requestedBy()
-           );
+    public ExtensionService(AuditEventRepository e, ArchiveBatchRepository a, RedactionRepository r, AuditService s, CryptoService c, AuditProperties p, ObjectMapper o) {
+        events = e;
+        archives = a;
+        redactions = r;
+        audit = s;
+        crypto = c;
+        props = p;
+        om = o;
+    }
 
-   redactions.save(redactionRecord);
+    @Transactional
+    public ArchiveResponse archive(ArchiveRequest r) {
+        List<AuditEvent> list = events.findByEventTimestampBeforeAndArchivedFalseOrderBySequenceNumberAsc(r.cutoff());
+        if (list.isEmpty()) return new ArchiveResponse(null, 0);
+        UUID id = UUID.randomUUID();
+        String manifest = crypto.sha256(list.stream().map(AuditEvent::getCurrentHash).reduce("", String::concat));
+        archives.save(new ArchiveBatch(id, list.get(0).getSequenceNumber(), list.get(list.size() - 1).getSequenceNumber(), list.size(), list.get(0).getCurrentHash(), list.get(list.size() - 1).getCurrentHash(), manifest, r.requestedBy(), r.reason()));
+        list.forEach(e -> e.archive(id));
+        return new ArchiveResponse(id, list.size());
+    }
+    @Transactional
+    public RedactionResponse redact(
+            UUID eventId,
+            RedactionRequest request
+    ) {
 
-  } catch (Exception exception) {
+        AuditEvent event =
+                audit.require(eventId);
 
-   throw new IllegalArgumentException(
-           "Unable to create redaction record",
-           exception
-   );
-  }
+        String commitment =
+                crypto.redactionCommitment(
+                        props.hmacKey(),
+                        event.getPayload(),
+                        request.jsonPaths()
+                );
 
-  return new RedactionResponse(
-          redactionId,
-          eventId,
-          request.jsonPaths(),
-          "RECORDED"
-  );
- }
- @Transactional(readOnly=true) public ExportBundle export(String actor,String resource){if((actor==null)==(resource==null))throw new IllegalArgumentException("Provide exactly one of actorId or resourceId");List<AuditEvent> list=actor!=null?events.findByActorIdOrderBySequenceNumberAsc(actor):events.findByResourceIdOrderBySequenceNumberAsc(resource);List<AuditEventResponse> out=list.stream().map(audit::map).toList();Map<String,String> f=Map.of(actor!=null?"actorId":"resourceId",actor!=null?actor:resource);UUID id=UUID.randomUUID();Instant now=Instant.now();String manifest=crypto.sha256(id+now.toString()+f+out);String sig=crypto.hmac(props.hmacKey(),manifest);return new ExportBundle("1",id,now,f,out,out.size(),manifest,sig);}
- public ExportVerifyResponse verifyExport(ExportBundle b){String manifest=crypto.sha256(b.exportId()+b.generatedAt().toString()+b.filter()+b.records());boolean ok=manifest.equals(b.manifestHash())&&crypto.hmac(props.hmacKey(),manifest).equals(b.manifestSignature());return new ExportVerifyResponse(ok,ok?"Export bundle is valid":"Export bundle integrity check failed");}}
+        UUID redactionId =
+                UUID.randomUUID();
+
+        JsonNode jsonPaths =
+                om.valueToTree(request.jsonPaths());
+
+        RedactionRecord redactionRecord =
+                new RedactionRecord(
+                        redactionId,
+                        eventId,
+                        jsonPaths,
+                        commitment,
+                        request.reason(),
+                        request.requestedBy()
+                );
+
+        redactions.save(redactionRecord);
+
+        return new RedactionResponse(
+                redactionId,
+                eventId,
+                request.jsonPaths(),
+                "RECORDED"
+        );
+    }
+       @Transactional(readOnly = true)
+    public ExportBundle export(String actor, String resource) {
+        if ((actor == null) == (resource == null))
+            throw new IllegalArgumentException("Provide exactly one of actorId or resourceId");
+        List<AuditEvent> list = actor != null ? events.findByActorIdOrderBySequenceNumberAsc(actor) : events.findByResourceIdOrderBySequenceNumberAsc(resource);
+        List<AuditEventResponse> out = list.stream().map(audit::map).toList();
+        Map<String, String> f = Map.of(actor != null ? "actorId" : "resourceId", actor != null ? actor : resource);
+        UUID id = UUID.randomUUID();
+        Instant now = Instant.now();
+        String manifest = crypto.sha256(id + now.toString() + f + out);
+        String sig = crypto.hmac(props.hmacKey(), manifest);
+        return new ExportBundle("1", id, now, f, out, out.size(), manifest, sig);
+    }
+
+    public ExportVerifyResponse verifyExport(ExportBundle b) {
+        String manifest = crypto.sha256(b.exportId() + b.generatedAt().toString() + b.filter() + b.records());
+        boolean ok = manifest.equals(b.manifestHash()) && crypto.hmac(props.hmacKey(), manifest).equals(b.manifestSignature());
+        return new ExportVerifyResponse(ok, ok ? "Export bundle is valid" : "Export bundle integrity check failed");
+    }
+}

@@ -256,9 +256,7 @@ public class CryptoService {
   try {
    canonicalPaths =
            objectMapper.writeValueAsString(jsonPaths);
-
   } catch (Exception exception) {
-
    throw new IllegalArgumentException(
            "Unable to serialize redaction paths",
            exception

@@ -9,12 +9,14 @@ import com.auditlog.service.entity.AuditEvent;
 import com.auditlog.service.entity.ChainState;
 import com.auditlog.service.repository.AuditEventRepository;
 import com.auditlog.service.repository.ChainStateRepository;
+import com.auditlog.service.service.RedactionProjectionService;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -31,17 +33,20 @@ public class AuditService {
  private final ChainStateRepository states;
  private final CryptoService crypto;
  private final AuditProperties properties;
+ private final RedactionProjectionService redactionProjection;
 
  public AuditService(
          AuditEventRepository events,
          ChainStateRepository states,
          CryptoService crypto,
-         AuditProperties properties
+         AuditProperties properties,
+         RedactionProjectionService redactionProjection
  ) {
   this.events = events;
   this.states = states;
   this.crypto = crypto;
   this.properties = properties;
+  this.redactionProjection = redactionProjection;
  }
 
  @Transactional
@@ -298,6 +303,12 @@ public class AuditService {
          AuditEvent event
  ) {
 
+  JsonNode projectedPayload =
+          redactionProjection.apply(
+                  event.getId(),
+                  event.getPayload()
+          );
+
   return new AuditEventResponse(
           event.getId(),
           event.getSequenceNumber(),
@@ -305,10 +316,7 @@ public class AuditService {
           event.getActorId(),
           event.getResourceType(),
           event.getResourceId(),
-
-          // Already JsonNode
-          event.getPayload(),
-
+          projectedPayload,
           event.getEventTimestamp(),
           event.getPreviousHash(),
           event.getCurrentHash(),
