@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/auditdb_test
+    username: ${TEST_DB_USER:postgres}
+    password: ${TEST_DB_PASSWORD:postgres}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
+
+audit:
+  genesis-hash: 0000000000000000000000000000000000000000000000000000000000000000
+
+  hmac-key: test-hmac-key-only-for-integration-tests
+
+  retention:
+    enabled: true
+    period: P365D

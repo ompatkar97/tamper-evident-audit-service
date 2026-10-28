@@ -1,2 +1,6 @@
 # Redaction design
-The immutable event is never edited. A dedicated append-only redaction record stores requested JSON paths, reason, actor, timestamp and HMAC commitment over the original payload plus paths. API read projections should mask approved paths as `[REDACTED]`. The prototype records evidence but intentionally does not rewrite payloads. HMAC avoids basic dictionary exposure from plain hashes, but security depends on secret-key protection and rotation procedures.
+
+The immutable event is never edited. A dedicated append-only redaction record stores requested JSON paths, reason,
+actor, timestamp and HMAC commitment over the original payload plus paths. API read projections should mask approved
+paths as `[REDACTED]`. The prototype records evidence but intentionally does not rewrite payloads. HMAC avoids basic
+dictionary exposure from plain hashes, but security depends on secret-key protection and rotation procedures.
