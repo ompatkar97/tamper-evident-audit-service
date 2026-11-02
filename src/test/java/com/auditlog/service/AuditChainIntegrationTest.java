@@ -1057,6 +1057,100 @@ class AuditChainIntegrationTest {
             );
         }
     }
+
+    @Test
+    void shouldRejectExportWhenRecordCountDoesNotMatch() throws Exception {
+
+        auditService.create(
+                new CreateAuditEventRequest(
+                        "ACCOUNT_VIEWED",
+                        "EMP101",
+                        "CLIENT_ACCOUNT",
+                        "AC0001",
+                        objectMapper.readTree("""
+                            {
+                              "operation": "VIEW",
+                              "channel": "WEB"
+                            }
+                            """),
+                        Instant.parse("2026-10-28T10:00:00Z")
+                )
+        );
+
+        auditService.create(
+                new CreateAuditEventRequest(
+                        "ACCOUNT_UPDATED",
+                        "EMP101",
+                        "CLIENT_ACCOUNT",
+                        "AC0001",
+                        objectMapper.readTree("""
+                            {
+                              "operation": "UPDATE",
+                              "channel": "WEB"
+                            }
+                            """),
+                        Instant.parse("2026-10-28T10:01:00Z")
+                )
+        );
+
+        ExportBundle original =
+                extensionService.export(
+                        null,
+                        "AC0001"
+                );
+
+        assertEquals(
+                2,
+                original.recordCount()
+        );
+
+        assertEquals(
+                2,
+                original.records().size()
+        );
+
+        /*
+         * Simulate removal of one record from the bundle
+         * without updating recordCount or integrity metadata.
+         */
+        List<AuditEventResponse> incompleteRecords =
+                new ArrayList<>(
+                        original.records()
+                );
+
+        incompleteRecords.remove(
+                incompleteRecords.size() - 1
+        );
+
+        ExportBundle incompleteBundle =
+                new ExportBundle(
+                        original.exportVersion(),
+                        original.exportId(),
+                        original.generatedAt(),
+                        original.filter(),
+                        incompleteRecords,
+
+                        // Keep original count deliberately
+                        original.recordCount(),
+
+                        original.manifestHash(),
+                        original.manifestSignature()
+                );
+
+        ExportVerifyResponse result =
+                extensionService.verifyExport(
+                        incompleteBundle
+                );
+
+        assertFalse(
+                result.valid()
+        );
+
+        assertEquals(
+                "Export record count does not match bundle contents",
+                result.message()
+        );
+    }
 }
 
 

@@ -99,9 +99,41 @@ public class ExtensionService {
         return new ExportBundle("1", id, now, f, out, out.size(), manifest, sig);
     }
 
-    public ExportVerifyResponse verifyExport(ExportBundle b) {
-        String manifest = crypto.sha256(b.exportId() + b.generatedAt().toString() + b.filter() + b.records());
-        boolean ok = manifest.equals(b.manifestHash()) && crypto.hmac(props.hmacKey(), manifest).equals(b.manifestSignature());
-        return new ExportVerifyResponse(ok, ok ? "Export bundle is valid" : "Export bundle integrity check failed");
+    public ExportVerifyResponse verifyExport(ExportBundle bundle) {
+
+        if (bundle.records() == null) {
+            return new ExportVerifyResponse(
+                    false,
+                    "Export bundle records are missing"
+            );
+        }
+
+        if (bundle.recordCount() != bundle.records().size()) {
+            return new ExportVerifyResponse(
+                    false,
+                    "Export record count does not match bundle contents"
+            );
+        }
+
+        String manifest = crypto.sha256(
+                bundle.exportId()
+                        + bundle.generatedAt().toString()
+                        + bundle.filter()
+                        + bundle.records()
+        );
+
+        boolean valid =
+                manifest.equals(bundle.manifestHash())
+                        && crypto.hmac(
+                        props.hmacKey(),
+                        manifest
+                ).equals(bundle.manifestSignature());
+
+        return new ExportVerifyResponse(
+                valid,
+                valid
+                        ? "Export bundle is valid"
+                        : "Export bundle integrity check failed"
+        );
     }
 }
