@@ -85,21 +85,87 @@ public class ExtensionService {
                 "RECORDED"
         );
     }
-       @Transactional(readOnly = true)
-    public ExportBundle export(String actor, String resource) {
-        if ((actor == null) == (resource == null))
-            throw new IllegalArgumentException("Provide exactly one of actorId or resourceId");
-        List<AuditEvent> list = actor != null ? events.findByActorIdOrderBySequenceNumberAsc(actor) : events.findByResourceIdOrderBySequenceNumberAsc(resource);
-        List<AuditEventResponse> out = list.stream().map(audit::map).toList();
-        Map<String, String> f = Map.of(actor != null ? "actorId" : "resourceId", actor != null ? actor : resource);
-        UUID id = UUID.randomUUID();
-        Instant now = Instant.now();
-        String manifest = crypto.sha256(id + now.toString() + f + out);
-        String sig = crypto.hmac(props.hmacKey(), manifest);
-        return new ExportBundle("1", id, now, f, out, out.size(), manifest, sig);
+    @Transactional(readOnly = true)
+    public ExportBundle export(
+            String actor,
+            String resource
+    ) {
+
+        if ((actor == null) == (resource == null)) {
+            throw new IllegalArgumentException(
+                    "Provide exactly one of actorId or resourceId"
+            );
+        }
+
+        List<AuditEvent> eventsToExport =
+                actor != null
+                        ? events.findByActorIdOrderBySequenceNumberAsc(actor)
+                        : events.findByResourceIdOrderBySequenceNumberAsc(resource);
+
+        List<AuditEventResponse> records =
+                eventsToExport.stream()
+                        .map(audit::map)
+                        .toList();
+
+        Map<String, String> filter =
+                Map.of(
+                        actor != null
+                                ? "actorId"
+                                : "resourceId",
+                        actor != null
+                                ? actor
+                                : resource
+                );
+
+        UUID exportId =
+                UUID.randomUUID();
+
+        Instant generatedAt =
+                Instant.now();
+
+        /*
+         * Generate a deterministic manifest hash using the
+         * same canonical representation used during verification.
+         */
+        String manifestHash =
+                crypto.exportManifestHash(
+                        exportId,
+                        generatedAt,
+                        filter,
+                        records
+                );
+
+        /*
+         * Protect the manifest using the configured HMAC key.
+         */
+        String manifestSignature =
+                crypto.hmac(
+                        props.hmacKey(),
+                        manifestHash
+                );
+
+        return new ExportBundle(
+                "1",
+                exportId,
+                generatedAt,
+                filter,
+                records,
+                records.size(),
+                manifestHash,
+                manifestSignature
+        );
     }
 
-    public ExportVerifyResponse verifyExport(ExportBundle bundle) {
+    public ExportVerifyResponse verifyExport(
+            ExportBundle bundle
+    ) {
+
+        if (bundle == null) {
+            return new ExportVerifyResponse(
+                    false,
+                    "Export bundle is missing"
+            );
+        }
 
         if (bundle.records() == null) {
             return new ExportVerifyResponse(
@@ -108,32 +174,64 @@ public class ExtensionService {
             );
         }
 
-        if (bundle.recordCount() != bundle.records().size()) {
+        if (bundle.exportId() == null
+                || bundle.generatedAt() == null
+                || bundle.filter() == null
+                || bundle.manifestHash() == null
+                || bundle.manifestSignature() == null) {
+
+            return new ExportVerifyResponse(
+                    false,
+                    "Export bundle metadata is incomplete"
+            );
+        }
+
+        if (bundle.recordCount()
+                != bundle.records().size()) {
+
             return new ExportVerifyResponse(
                     false,
                     "Export record count does not match bundle contents"
             );
         }
 
-        String manifest = crypto.sha256(
-                bundle.exportId()
-                        + bundle.generatedAt().toString()
-                        + bundle.filter()
-                        + bundle.records()
-        );
+        String expectedManifestHash =
+                crypto.exportManifestHash(
+                        bundle.exportId(),
+                        bundle.generatedAt(),
+                        bundle.filter(),
+                        bundle.records()
+                );
 
-        boolean valid =
-                manifest.equals(bundle.manifestHash())
-                        && crypto.hmac(
+        if (!expectedManifestHash.equals(
+                bundle.manifestHash()
+        )) {
+
+            return new ExportVerifyResponse(
+                    false,
+                    "Export bundle integrity check failed"
+            );
+        }
+
+        String expectedSignature =
+                crypto.hmac(
                         props.hmacKey(),
-                        manifest
-                ).equals(bundle.manifestSignature());
+                        expectedManifestHash
+                );
+
+        if (!expectedSignature.equals(
+                bundle.manifestSignature()
+        )) {
+
+            return new ExportVerifyResponse(
+                    false,
+                    "Export bundle integrity check failed"
+            );
+        }
 
         return new ExportVerifyResponse(
-                valid,
-                valid
-                        ? "Export bundle is valid"
-                        : "Export bundle integrity check failed"
+                true,
+                "Export bundle is valid"
         );
     }
 }

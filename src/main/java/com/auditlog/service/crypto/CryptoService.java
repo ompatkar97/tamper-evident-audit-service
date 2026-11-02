@@ -13,6 +13,8 @@ import java.util.*;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import com.auditlog.service.dto.ApiDtos.AuditEventResponse;
+
 
 import org.springframework.stereotype.Component;
 
@@ -274,4 +276,127 @@ public class CryptoService {
           commitmentInput
   );
  }
+
+ public String exportManifestHash(
+         UUID exportId,
+         Instant generatedAt,
+         Map<String, String> filter,
+         List<AuditEventResponse> records
+ ) {
+
+  try {
+   ObjectNode manifest = objectMapper.createObjectNode();
+
+   manifest.put(
+           "version",
+           "export-v1"
+   );
+
+   manifest.put(
+           "exportId",
+           exportId.toString()
+   );
+
+   manifest.put(
+           "generatedAt",
+           generatedAt.toString()
+   );
+
+   manifest.set(
+           "filter",
+           objectMapper.valueToTree(filter)
+   );
+
+   manifest.put(
+           "recordCount",
+           records.size()
+   );
+
+   ArrayNode recordArray =
+           objectMapper.createArrayNode();
+
+   for (AuditEventResponse record : records) {
+
+    ObjectNode item =
+            objectMapper.createObjectNode();
+
+    item.put(
+            "id",
+            record.id().toString()
+    );
+
+    item.put(
+            "sequenceNumber",
+            record.sequenceNumber()
+    );
+
+    item.put(
+            "eventType",
+            record.eventType()
+    );
+
+    item.put(
+            "actorId",
+            record.actorId()
+    );
+
+    item.put(
+            "resourceType",
+            record.resourceType()
+    );
+
+    item.put(
+            "resourceId",
+            record.resourceId()
+    );
+
+    item.set(
+            "payload",
+            record.payload()
+    );
+
+    item.put(
+            "timestamp",
+            record.timestamp().toString()
+    );
+
+    item.put(
+            "previousHash",
+            record.previousHash()
+    );
+
+    item.put(
+            "currentHash",
+            record.currentHash()
+    );
+
+    item.put(
+            "archived",
+            record.archived()
+    );
+
+    recordArray.add(item);
+   }
+
+   manifest.set(
+           "records",
+           recordArray
+   );
+
+   String canonicalManifest =
+           canonical(manifest);
+
+   return sha256(
+           canonicalManifest
+   );
+
+  } catch (Exception exception) {
+
+   throw new IllegalStateException(
+           "Unable to create export manifest hash",
+           exception
+   );
+  }
+ }
+
 }
