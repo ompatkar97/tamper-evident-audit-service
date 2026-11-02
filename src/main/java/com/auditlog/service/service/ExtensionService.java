@@ -194,7 +194,21 @@ public class ExtensionService {
                     "Export record count does not match bundle contents"
             );
         }
+        for (AuditEventResponse record : bundle.records()) {
 
+            String expectedEventHash =
+                    crypto.recalcExportedEvent(record);
+
+            if (!expectedEventHash.equals(
+                    record.currentHash()
+            )) {
+
+                return new ExportVerifyResponse(
+                        false,
+                        "Export contains an invalid audit event hash"
+                );
+            }
+        }
         String expectedManifestHash =
                 crypto.exportManifestHash(
                         bundle.exportId(),

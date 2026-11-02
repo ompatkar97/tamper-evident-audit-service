@@ -398,5 +398,23 @@ public class CryptoService {
    );
   }
  }
+ public String recalcExportedEvent(
+         AuditEventResponse event
+ ) {
 
+  String canonicalPayload =
+          canonical(event.payload());
+
+  return eventHash(
+          event.sequenceNumber(),
+          event.id(),
+          event.eventType(),
+          event.actorId(),
+          event.resourceType(),
+          event.resourceId(),
+          canonicalPayload,
+          event.timestamp(),
+          event.previousHash()
+  );
+ }
 }

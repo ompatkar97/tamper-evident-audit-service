@@ -838,7 +838,7 @@ class AuditChainIntegrationTest {
         );
 
         assertEquals(
-                "Export bundle integrity check failed",
+                "Export contains an invalid audit event hash",
                 tamperedResult.message()
         );
     }
